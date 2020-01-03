@@ -150,21 +150,19 @@ func (r *RestResource) checkParams() {
 	method2params := app.Params()
 	if method2params != nil {
 		if params, ok := method2params[method]; ok {
-			actualParams := r.Input()
-			if r.Ctx.Input.IsUpload() {
-				multipartForm := r.Ctx.Request.MultipartForm
-				for _, param := range params {
-					if _, ok := multipartForm.Value[param]; !ok {
-						if _, ok := multipartForm.File[param]; !ok {
-							RaiseException("rest:missing_argument", fmt.Sprintf("missing or invalid argument: [%s]", param))
-						}
-					}
+			actualParams := make(map[string]interface{}, 0)
+			for k, v := range r.Input() {
+				actualParams[k] = v
+			}
+			if r.Ctx.Request.MultipartForm != nil {
+				for k, v := range r.Ctx.Request.MultipartForm.File {
+					actualParams[k] = v
 				}
-			} else {
-				for _, param := range params {
-					if _, ok := actualParams[param]; !ok {
-						RaiseException("rest:missing_argument", fmt.Sprintf("missing or invalid argument: [%s]", param))
-					}
+			}
+
+			for _, param := range params {
+				if _, ok := actualParams[param]; !ok {
+					RaiseException("rest:missing_argument", fmt.Sprintf("missing or invalid argument: [%s]", param))
 				}
 			}
 		}
@@ -187,7 +185,46 @@ func (r *RestResource) checkValidToken() {
 	}
 }
 
+func (r *RestResource) mergeParams() {
+	token := r.Ctx.GetCookie("token")
+	if token != "" {
+		r.Input().Set("token", token)
+	}
+
+	// merge body params
+	bodyParams := make(map[string]interface{}, 0)
+	err := json.Unmarshal(r.Ctx.Input.RequestBody, &bodyParams)
+	if err == nil {
+		for k, v := range bodyParams {
+			strV := ""
+			switch t := v.(type) {
+			case string:
+				strV = fmt.Sprintf("%s", v.(string))
+				break
+			case int:
+				strV = fmt.Sprintf("%d", v.(int))
+				break
+			case float64:
+				strV = fmt.Sprintf("%g", v.(float64))
+				break
+			case Map:
+				bytes, _ := json.Marshal(v.(Map))
+				strV = string(bytes)
+				break
+			case []interface{}:
+				bytes, _ := json.Marshal(v.([]interface{}))
+				strV = string(bytes)
+				break
+			default:
+				beego.Warn(fmt.Sprintf("unknown type %t", t))
+			}
+			r.Input().Set(k, strV)
+		}
+	}
+}
+
 func (r *RestResource) Prepare() {
+	r.mergeParams()
 	r.checkValidSign()
 	r.checkParams()
 	r.checkValidToken()
